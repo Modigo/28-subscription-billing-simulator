@@ -1,38 +1,15 @@
-
-from datetime import date
 from calendar import monthrange
+from datetime import date, datetime
 
-# Sample subscriptions
-subscriptions = [
-    {
-        "customer": "Helen",
-        "price": 5000,
-        "status": "active",
-        "next_billing_date": date(2026, 10, 20),
-        "payment_success": True,
-        "retries": 0
-    },
-    {
-        "customer": "John",
-        "price": 3000,
-        "status": "active",
-        "next_billing_date": date(2026, 10, 15),
-        "payment_success": False,
-        "retries": 0
-    },
-    {
-        "customer": "Mary",
-        "price": 7000,
-        "status": "cancelled",
-        "next_billing_date": date(2026, 10, 1),
-        "payment_success": True,
-        "retries": 0
-    }
-]
+from sqlalchemy.orm import Session
+
+from models import Invoice, InvoiceStatus, SubStatus
+from dunning import schedule_initial_retry, record_retry_result
 
 
-# Move the billing date forward by one month
 def next_month(billing_date):
+    """Advance a billing date by one month, preserving its day when possible."""
+
     year = billing_date.year
     month = billing_date.month + 1
 
@@ -42,65 +19,98 @@ def next_month(billing_date):
 
     day = min(
         billing_date.day,
-        monthrange(year, month)[1]
+        monthrange(year, month)[1],
     )
 
-    return date(year, month, day)
+    return billing_date.replace(
+        year=year,
+        month=month,
+        day=day,
+    )
 
 
-# Find subscriptions that are due
-def find_due_subscriptions(subscriptions, today):
-    due = []
+def simulate_billing(
+    db: Session,
+    subscription,
+    payment_success: bool,
+):
+    """Create an invoice and simulate its initial payment."""
 
-    for subscription in subscriptions:
-        if (
-            subscription["status"] == "active"
-            and subscription["next_billing_date"] <= today
-        ):
-            due.append(subscription)
+    if subscription.status != SubStatus.ACTIVE:
+        return {
+            "status": "Skipped",
+            "message": "The subscription is not active.",
+        }
 
-    return due
+    if subscription.next_billing_date is None:
+        return {
+            "status": "Skipped",
+            "message": "The subscription has no billing date.",
+        }
 
+    if subscription.plan is None:
+        raise ValueError("The subscription has no associated plan.")
 
-# Simulate billing
-def run_billing(subscriptions, today):
-    due = find_due_subscriptions(subscriptions, today)
+    invoice = Invoice(
+        subscription_id=subscription.id,
+        customer_name=subscription.customer_name,
+        amount_due=subscription.plan.price,
+        retry_count=0,
+        status=(
+            InvoiceStatus.PAID
+            if payment_success
+            else InvoiceStatus.FAILED
+        ),
+        next_retry_date=None,
+    )
 
-    if not due:
-        print("No subscriptions are due for billing.")
-        return
+    try:
+        db.add(invoice)
+        db.flush()
 
-    for subscription in due:
-        print("\nCustomer:", subscription["customer"])
-        print("Invoice amount: ₦", subscription["price"])
-
-        if subscription["payment_success"]:
-            print("Payment successful!")
-
-            subscription["next_billing_date"] = next_month(
-                subscription["next_billing_date"]
+        if payment_success:
+            subscription.next_billing_date = next_month(
+                subscription.next_billing_date
             )
-            subscription["retries"] = 0
 
-            print("Invoice status: PAID")
-            print(
-                "Next billing date:",
-                subscription["next_billing_date"]
-            )
+            db.commit()
+            db.refresh(invoice)
 
-        else:
-            subscription["retries"] += 1
+            return {
+                "status": "Paid",
+                "customer": subscription.customer_name,
+                "invoice_id": invoice.id,
+                "amount": str(invoice.amount_due),
+                "message": "Initial payment successful.",
+            }
 
-            print("Payment failed!")
-            print("Invoice status: FAILED")
-            print("Retry attempt:", subscription["retries"])
+        # The dunning module records the failure time,
+        # schedules the first retry, and commits the invoice.
+        result = schedule_initial_retry(db, invoice)
 
-            if subscription["retries"] >= 3:
-                print("Maximum retries reached.")
-            else:
-                print("Payment can be retried later.")
+        return {
+            "status": "Failed",
+            "customer": subscription.customer_name,
+            "invoice_id": invoice.id,
+            "amount": str(invoice.amount_due),
+            "message": "Initial payment failed.",
+            "dunning": result,
+        }
+
+    except Exception:
+        db.rollback()
+        raise
 
 
-# Run the simulator
-today = date(2026, 10, 20)
-run_billing(subscriptions, today)
+def simulate_retry_payment(
+    db: Session,
+    invoice: Invoice,
+    payment_success: bool,
+):
+    """Simulate a retry payment and record its outcome."""
+
+    return record_retry_result(
+        db=db,
+        invoice=invoice,
+        succeeded=payment_success,
+    )
