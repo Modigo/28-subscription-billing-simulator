@@ -7,8 +7,10 @@ from sqlalchemy.orm import Session
 from app.models import Customer, Plan, Subscription
 from app.subscriptions import create_subscription, cancel_subscription, get_subscriptions
 from app.schemas import SubscriptionCreate, SubscriptionOut
+
 from app.database import get_db, init_db
 from app.invoice import generate_invoice, get_invoices
+from app.payments import process_payment, process_due_retries
 from app.schemas import InvoiceOut
 from app.models import Customer, Plan
 from app.plans import create_plan, get_plans
@@ -132,6 +134,39 @@ def add_subscription(
             status_code=422,
             detail=str(error),
         ) from error
+    
+
+    # PAYMENT ENDPOINTS
+
+@app.post("/invoices/{invoice_id}/payments")
+def simulate_payment(
+    invoice_id: int,
+    succeed: bool,
+    message: str | None = None,
+    db: Session = Depends(get_db),
+):
+    try:
+        attempt = process_payment(
+            db=db,
+            invoice_id=invoice_id,
+            succeed=succeed,
+            message=message,
+        )
+        return {
+            "message": "Payment attempt recorded.",
+            "invoice_id": invoice_id,
+            "attempt_number": attempt.attempt_number,
+            "status": attempt.status,
+            "details": attempt.message,
+        }
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+
+@app.get("/payment-retries/due")
+def list_due_payment_retries(db: Session = Depends(get_db)):
+    return process_due_retries(db)
 
 
 @app.post(
@@ -150,11 +185,10 @@ def cancel_existing_subscription(
             detail=str(error),
         ) from error
     
-
 # INVOICE ENDPOINTS
 
 @app.get("/invoices", response_model=list[InvoiceOut])
-def list_invoices(db: Session = Depends(get_db)):
+def list_all_invoices(db: Session = Depends(get_db)):
     return get_invoices(db)
 
 
@@ -166,10 +200,12 @@ def list_subscription_invoices(
     subscription_id: int,
     db: Session = Depends(get_db),
 ):
-    if db.get(Subscription, subscription_id) is None:
+    subscription = db.get(Subscription, subscription_id)
+
+    if subscription is None:
         raise HTTPException(status_code=404, detail="Subscription not found.")
 
-    return get_invoices(db, subscription_id)
+    return get_invoices(db, subscription_id=subscription_id)
 
 
 @app.post(
