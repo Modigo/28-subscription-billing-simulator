@@ -35,6 +35,7 @@ function statusClass(value) {
   return (value || 'unknown').toLowerCase().replaceAll('_', '-').replaceAll(' ', '-')
 }
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 function App() {
   const [activePage, setActivePage] = useState('Overview')
   const [customers, setCustomers] = useState([])
@@ -51,10 +52,10 @@ function App() {
 
       try {
         const endpoints = [
-          '/api/customers',
-          '/api/plans',
-          '/api/subscriptions',
-          '/api/invoices',
+          `${API_BASE_URL}/customers`,
+          `${API_BASE_URL}/plans`,
+          `${API_BASE_URL}/subscriptions`,
+          `${API_BASE_URL}/invoices`,
         ]
 
         const responses = await Promise.all(
