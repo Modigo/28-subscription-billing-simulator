@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -7,6 +8,8 @@ from app.models import Customer, Plan, Subscription
 from app.subscriptions import create_subscription, cancel_subscription, get_subscriptions
 from app.schemas import SubscriptionCreate, SubscriptionOut
 from app.database import get_db, init_db
+from app.invoice import generate_invoice, get_invoices
+from app.schemas import InvoiceOut
 from app.models import Customer, Plan
 from app.plans import create_plan, get_plans
 from app.schemas import (
@@ -147,3 +150,51 @@ def cancel_existing_subscription(
             detail=str(error),
         ) from error
     
+
+# INVOICE ENDPOINTS
+
+@app.get("/invoices", response_model=list[InvoiceOut])
+def list_invoices(db: Session = Depends(get_db)):
+    return get_invoices(db)
+
+
+@app.get(
+    "/subscriptions/{subscription_id}/invoices",
+    response_model=list[InvoiceOut],
+)
+def list_subscription_invoices(
+    subscription_id: int,
+    db: Session = Depends(get_db),
+):
+    if db.get(Subscription, subscription_id) is None:
+        raise HTTPException(status_code=404, detail="Subscription not found.")
+
+    return get_invoices(db, subscription_id)
+
+
+@app.post(
+    "/subscriptions/{subscription_id}/invoices",
+    response_model=InvoiceOut,
+    status_code=201,
+)
+def create_subscription_invoice(
+    subscription_id: int,
+    db: Session = Depends(get_db),
+):
+    subscription = db.get(Subscription, subscription_id)
+
+    if subscription is None:
+        raise HTTPException(status_code=404, detail="Subscription not found.")
+
+    try:
+        return generate_invoice(
+            db=db,
+            subscription_id=subscription.id,
+            plan_price_kobo=subscription.plan.price_kobo,
+            billing_period_start=subscription.current_period_start,
+            billing_period_end=subscription.current_period_end,
+            issue_date=datetime.utcnow(),
+            due_date=datetime.utcnow() + timedelta(days=7),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
