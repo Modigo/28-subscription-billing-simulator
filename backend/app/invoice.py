@@ -82,3 +82,22 @@ def get_invoices(
         query = query.filter_by(subscription_id=subscription_id)
 
     return query.order_by(Invoice.id).all()
+
+
+def update_invoice_status(db: Session, invoice_id: int, status: str):
+    invoice = db.get(Invoice, invoice_id)
+
+    if invoice is None:
+        raise ValueError("Invoice not found.")
+
+    valid_statuses = {item.value for item in InvoiceStatus}
+
+    if status not in valid_statuses:
+        raise ValueError(f"Invalid invoice status: {status}")
+
+    invoice.status = status
+    db.commit()
+    db.refresh(invoice)
+
+    return invoice
+
