@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: subscription-billing-api
+    env: python
+    region: oregon
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12
+      - key: PORT
+        value: 10000
+      - key: APP_ENV
+        value: production
+      - key: DEMO_MODE
+        value: true
+      - key: RETRY_SCHEDULE
+        value: 3,7,14
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
