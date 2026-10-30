@@ -38,13 +38,16 @@ git push origin main
 
 1. Go to [Render Dashboard](https://dashboard.render.com/)
 2. Click **"New +"** → **"Web Service"**
-3. Connect your GitHub repo
+3. Connect your GitHub repo — select the `deploy/main` branch
 4. Configure:
    - **Name**: `subscription-billing-api`
+   - **Region**: Frankfurt (closest to Supabase EU-West)
    - **Root Directory**: `backend`
    - **Build Command**: `pip install -r requirements.txt`
    - **Start Command**: `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-   - **Instance Type**: Free
+   - **Type**: **Free**
+
+> ⚠️ **Important**: Make sure the Root Directory is `backend` — this tells Render to run the build and start commands inside the `backend/` folder. Do NOT include `cd backend` or `backend/` in the commands.
 
 ### Environment Variables (required)
 
@@ -145,3 +148,28 @@ Any time you push changes to GitHub:
 - **Vercel**: Automatically rebuilds and deploys the frontend
 
 No manual intervention needed!
+
+---
+
+## Troubleshooting
+
+### Backend deployment fails on Render
+
+**Check the build logs** in your Render dashboard. Common causes:
+
+1. **Wrong Root Directory**: If set to `backend`, the Build Command should be `pip install -r requirements.txt` (not `pip install -r backend/requirements.txt`). The Start Command should be `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT` (not `cd backend && ...`).
+
+2. **Missing DATABASE_URL**: Ensure you've added the `DATABASE_URL` environment variable in Render's Environment tab with your Supabase connection string.
+
+3. **Database migration fails**: If the database already has tables from a previous deployment, Alembic may fail. Check the logs for the exact error. You may need to reset your Supabase database or check the Alembic version table.
+
+4. **Connection timeout**: Supabase Pooler (port 6543) works with Render. If you see connection errors, try using the direct connection port (5432) from your Supabase dashboard.
+
+### Frontend can't connect to backend
+
+1. **CORS error**: Update `CORS_ORIGINS` on Render to include your Vercel frontend URL.
+2. **Wrong API URL**: Verify `VITE_API_BASE_URL` on Vercel matches your Render backend URL exactly (no trailing slash).
+
+### Render free tier sleeping
+
+The backend sleeps after 15 minutes of inactivity. Visit `https://your-api.onrender.com/health` to wake it up before your presentation.
